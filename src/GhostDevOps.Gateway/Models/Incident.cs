@@ -1,3 +1,5 @@
+using Microsoft.EntityFrameworkCore;
+
 namespace GhostDevOps.Gateway.Models;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -30,8 +32,6 @@ public class Incident
 // ─────────────────────────────────────────────────────────────────────────────
 //  EF Core DbContext for incident persistence
 // ─────────────────────────────────────────────────────────────────────────────
-using Microsoft.EntityFrameworkCore;
-
 public class GhostDbContext(DbContextOptions<GhostDbContext> options) : DbContext(options)
 {
     public DbSet<Incident> Incidents => Set<Incident>();

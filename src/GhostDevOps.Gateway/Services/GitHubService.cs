@@ -123,6 +123,6 @@ public class GitHubService
         - ✅ Risk score within acceptable threshold
 
         > *This PR was generated autonomously by Ghost DevOps and has passed all pre-flight checks.*
-        > *Human approval was {'required and granted' if incident.HumanApproved else 'not required for this risk level'}.*
+        > *Human approval: {(incident.HumanApproved ? "required and granted" : "not required for this risk level")}.*
         """;
 }
