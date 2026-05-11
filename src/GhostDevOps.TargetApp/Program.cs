@@ -1,91 +1,89 @@
-// ─────────────────────────────────────────────────────────────────────────────
-//  GhostDevOps.TargetApp — The intentionally broken service.
-//  This app simulates three real-world defects:
-//    1. /leak       → Memory leak (unclosed byte array accumulation)
-//    2. /slow-query → Simulates a slow DB query without proper cancellation
-//    3. /metrics    → Prometheus scrape endpoint (healthy telemetry)
-//
-//  Ghost DevOps monitors this container and autonomously patches the bugs.
-// ─────────────────────────────────────────────────────────────────────────────
-
-using Prometheus;
+using System.Buffers;
+using System.Runtime;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 var builder = WebApplication.CreateBuilder(args);
-builder.Services.AddHealthChecks();
-
+builder.Services.AddLogging();
 var app = builder.Build();
-app.UseHttpMetrics(); // Prometheus HTTP metrics middleware
 
-// ── Health & Prometheus endpoints ────────────────────────────────────────────
-app.MapHealthChecks("/health");
-app.MapMetrics("/metrics");   // Prometheus scrapes this
+var logger = app.Services.GetRequiredService<ILogger<Program>>();
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  BUG #1: Memory Leak
-//  Root cause: Static list accumulates 10MB byte arrays on every request.
-//  The `leak` list is never cleared — this is what Ghost DevOps must detect
-//  and fix by suggesting a bounded collection or a /clear endpoint.
-// ─────────────────────────────────────────────────────────────────────────────
-var leak = new List<byte[]>();  // BUG: Should be bounded or cleared
-
-app.MapGet("/leak", () =>
+GC.RegisterForFullGCNotification(10, 10);
+_ = Task.Run(async () =>
 {
-    leak.Add(new byte[10 * 1024 * 1024]); // 10MB per call
-    var memMb = leak.Count * 10;
-    Console.WriteLine($"[LEAK] Simulated {memMb}MB allocated. Objects: {leak.Count}");
-    return Results.Ok(new
+    while (true)
     {
-        message  = "Memory leaked!",
-        totalMb  = memMb,
-        objects  = leak.Count
-    });
+        var status = GC.WaitForFullGCApproach(millisecondsTimeout: 500);
+        if (status == GCNotificationStatus.Succeeded)
+        {
+            var gcInfo = GC.GetGCMemoryInfo();
+            var usedPercent = gcInfo.HeapSizeBytes == 0
+                ? 0
+                : (double)gcInfo.MemoryLoadBytes / gcInfo.TotalAvailableMemoryBytes * 100;
+
+            if (usedPercent >= 80)
+            {
+                logger.LogWarning(
+                    "Memory pressure warning: {UsedPercent:F1}% of available memory in use. " +
+                    "HeapSize={HeapSizeBytes} LOH may be under stress.",
+                    usedPercent,
+                    gcInfo.HeapSizeBytes);
+            }
+
+            GC.CancelFullGCNotification();
+            GC.RegisterForFullGCNotification(10, 10);
+        }
+
+        await Task.Delay(TimeSpan.FromSeconds(1));
+    }
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  BUG #2: Slow Query (Thread Pool Exhaustion)
-//  Root cause: Task.Run without ConfigureAwait + no CancellationToken.
-//  This blocks thread pool threads and causes latency spikes under load.
-//  Ghost DevOps Architect identifies this; Developer adds CancellationToken.
-// ─────────────────────────────────────────────────────────────────────────────
-app.MapGet("/slow-query", async () =>
+app.MapPost("/process", async (HttpContext context, CancellationToken ct) =>
 {
-    // BUG: Thread.Sleep inside Task.Run blocks a thread pool thread.
-    // FIX (Ghost DevOps will suggest): await Task.Delay(ct) with CancellationToken
-    await Task.Run(() => Thread.Sleep(3000));
-    return Results.Ok(new { message = "Slow query completed", latencyMs = 3000 });
+    const int bufferSize = 10 * 1024 * 1024; // 10 MB
+
+    var pool = ArrayPool<byte>.Shared;
+    var buffer = pool.Rent(bufferSize);
+    try
+    {
+        // Simulate processing work using the rented buffer instead of
+        // allocating a new byte[] that would land on the LOH.
+        buffer[0] = 0xFF;
+        buffer[bufferSize - 1] = 0xFF;
+
+        await Task.Delay(TimeSpan.FromMilliseconds(50), ct);
+
+        var bytesRead = await context.Request.Body.ReadAsync(
+            buffer.AsMemory(0, bufferSize), ct);
+
+        logger.LogInformation("Processed request, read {BytesRead} bytes.", bytesRead);
+
+        await context.Response.WriteAsync("OK", ct);
+    }
+    finally
+    {
+        pool.Return(buffer, clearArray: true);
+    }
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  BUG #3: Unclosed SQL Connection simulation
-//  Root cause: SqlConnection opened without a `using` statement.
-//  In a real app this exhausts the connection pool after ~100 requests.
-// ─────────────────────────────────────────────────────────────────────────────
-app.MapGet("/sql-leak", () =>
+app.MapGet("/health", async (HttpContext context, CancellationToken ct) =>
 {
-    // BUG: Simulates a SqlConnection opened but never disposed.
-    // Ghost DevOps Developer will wrap this in a `using` statement.
-    SimulateSqlConnectionLeak();
-    return Results.Ok(new { message = "SQL connection opened (and leaked!)" });
+    var gcInfo = GC.GetGCMemoryInfo();
+    var lohSize = GC.GetGeneration(new object()) >= 0
+        ? GC.GetTotalMemory(forceCollection: false)
+        : 0L;
+
+    await context.Response.WriteAsJsonAsync(new
+    {
+        status = "healthy",
+        totalManagedMemoryBytes = GC.GetTotalMemory(forceCollection: false),
+        heapSizeBytes = gcInfo.HeapSizeBytes,
+        memoryLoadBytes = gcInfo.MemoryLoadBytes,
+        totalAvailableMemoryBytes = gcInfo.TotalAvailableMemoryBytes,
+    }, ct);
 });
 
-app.MapGet("/", () => Results.Ok(new
-{
-    service  = "GhostDevOps TargetApp",
-    version  = "1.0.0-broken",
-    bugs     = new[] { "/leak", "/slow-query", "/sql-leak" },
-    health   = "/health",
-    metrics  = "/metrics"
-}));
-
-app.Run();
-
-// ─────────────────────────────────────────────────────────────────────────────
-static void SimulateSqlConnectionLeak()
-{
-    // Intentionally NOT using `using` — this is the bug Ghost DevOps detects.
-    // var conn = new SqlConnection(connectionString);
-    // conn.Open();
-    // Real fix: using var conn = new SqlConnection(connectionString); { ... }
-    Console.WriteLine("[SQL-LEAK] SqlConnection opened without disposal.");
-    Thread.Sleep(100); // Simulate DB round-trip
-}
+await app.RunAsync();
