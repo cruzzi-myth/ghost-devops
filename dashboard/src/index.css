@@ -1,0 +1,25 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  background-color: rgb(2 6 23); /* slate-950 */
+  font-family: 'Inter', system-ui, sans-serif;
+}
+
+/* Smooth scroll for the incident log */
+::-webkit-scrollbar        { width: 4px; }
+::-webkit-scrollbar-track  { background: rgb(15 23 42); }
+::-webkit-scrollbar-thumb  { background: rgb(51 65 85); border-radius: 2px; }
+
+@keyframes animate-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.animate-in { animation: animate-in 0.3s ease-out; }

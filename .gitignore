@@ -1,0 +1,41 @@
+# .NET
+bin/
+obj/
+*.user
+*.suo
+.vs/
+appsettings.Development.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.env
+*.egg-info/
+dist/
+
+# Node / React
+node_modules/
+dist/
+build/
+.env.local
+.env.production
+
+# Docker
+.dockerignore
+
+# Secrets (NEVER commit these)
+*.pem
+*.key
+secrets/
+
+# IDE
+.idea/
+.vscode/settings.json
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db

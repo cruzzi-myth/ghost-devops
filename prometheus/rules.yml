@@ -1,0 +1,40 @@
+groups:
+  - name: GhostDevOpsRules
+    rules:
+      # ── Memory Leak Detection ───────────────────────────────────────────────
+      - alert: HighMemoryUsage
+        expr: |
+          container_memory_usage_bytes{container_label_com_docker_compose_service="target-app"}
+          / container_spec_memory_limit_bytes{container_label_com_docker_compose_service="target-app"}
+          > 0.90
+        for: 1m
+        labels:
+          severity: critical
+          service: target-app
+        annotations:
+          summary: "Memory leak detected in {{ $labels.container_label_com_docker_compose_service }}"
+          description: "Container memory usage is above 90% for over 1 minute. Current: {{ $value | humanizePercentage }}"
+
+      # ── Slow Query Detection ────────────────────────────────────────────────
+      - alert: SlowQueryDetected
+        expr: |
+          histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="target-app"}[5m])) > 2.0
+        for: 2m
+        labels:
+          severity: warning
+          service: target-app
+        annotations:
+          summary: "Slow queries detected in {{ $labels.job }}"
+          description: "95th percentile latency is {{ $value }}s — threshold is 2s"
+
+      # ── Container Restart Loop ──────────────────────────────────────────────
+      - alert: ContainerRestartLoop
+        expr: |
+          rate(container_start_time_seconds{container_label_com_docker_compose_service="target-app"}[10m]) > 0.1
+        for: 5m
+        labels:
+          severity: critical
+          service: target-app
+        annotations:
+          summary: "Container restart loop detected"
+          description: "Container has restarted more than once per 10 minutes"

@@ -1,0 +1,70 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ghost-gateway
+  namespace: default
+  labels:
+    app: ghost-gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ghost-gateway
+  template:
+    metadata:
+      labels:
+        app: ghost-gateway
+    spec:
+      serviceAccountName: ghost-devops-sa   # Least-privilege k8s SA
+      containers:
+        - name: ghost-gateway
+          image: ghcr.io/cruzzi-myth/ghost-devops/ghost-gateway:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ghost-devops-secrets
+                  key: anthropic-api-key
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: ghost-devops-secrets
+                  key: github-token
+            - name: GitHub__Owner
+              value: "cruzzi-myth"
+            - name: GitHub__Repo
+              value: "ghost-devops"
+            - name: Brain__Url
+              value: "http://ghost-brain:8000"
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ghost-devops-sa
+  namespace: default
+---
+# Least-privilege RBAC — only allow restart (patch deployments), nothing else
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ghost-devops-restarter
+  namespace: default
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs:     ["get", "patch"]   # No delete, no create, no list
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ghost-devops-restarter-binding
+  namespace: default
+subjects:
+  - kind: ServiceAccount
+    name: ghost-devops-sa
+roleRef:
+  kind: Role
+  name: ghost-devops-restarter
+  apiGroup: rbac.authorization.k8s.io

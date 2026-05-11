@@ -1,0 +1,63 @@
+version: "3.9"
+
+services:
+  # ─── The "broken" target app that leaks memory ───────────────────────────────
+  target-app:
+    build: ./src/GhostDevOps.TargetApp
+    container_name: target-app
+    ports:
+      - "5001:8080"
+    labels:
+      - "prometheus.scrape=true"
+
+  # ─── The .NET Ghost Gateway (webhook receiver + Octokit + SignalR) ───────────
+  ghost-gateway:
+    build: ./src/GhostDevOps.Gateway
+    container_name: ghost-gateway
+    ports:
+      - "5000:8080"
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - GITHUB_OWNER=${GITHUB_OWNER}
+      - GITHUB_REPO=${GITHUB_REPO}
+      - BRAIN_URL=http://ghost-brain:8000
+    depends_on:
+      - ghost-brain
+
+  # ─── The Python LangGraph Brain ──────────────────────────────────────────────
+  ghost-brain:
+    build: ./brain
+    container_name: ghost-brain
+    ports:
+      - "8000:8000"
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+
+  # ─── Prometheus (metrics scraper) ────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./prometheus/rules.yml:/etc/prometheus/rules.yml
+
+  # ─── Alertmanager (fires webhooks to ghost-gateway) ──────────────────────────
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: alertmanager
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./prometheus/alertmanager.yml:/etc/alertmanager/alertmanager.yml
+
+  # ─── React Command Center Dashboard ──────────────────────────────────────────
+  dashboard:
+    build: ./dashboard
+    container_name: ghost-dashboard
+    ports:
+      - "3000:80"
+    depends_on:
+      - ghost-gateway
